@@ -209,7 +209,14 @@ if enviado:
             regra, pags[["ordem_pagamento", "data_pagamento", "Valor_Depositado"]],
             principal, juros, data_inicial, fim_graca, data_final_ts, bases, selic_inicial=selic)
 
-        excedentes = df_final.attrs.get("excedentes", [])
+        # Excedente calculado direto da tabela de resultado (não depende de outro módulo)
+        excedentes = [
+            {"ordem": int(r["ordem_pagamento"]), "mes": r["data_pagamento"], "deposito": float(r["Valor_Depositado"]),
+             "devido": float(r["Total_data_pagto"]),
+             "excedente": float(r["Valor_Depositado"]) - float(r["Total_data_pagto"])}
+            for _, r in df_final.iterrows()
+            if r["ordem_pagamento"] != "FINAL" and float(r["Valor_Depositado"]) - float(r["Total_data_pagto"]) > 0.005
+        ]
         parametros = {
             "Esfera": regra.esfera,
             "Regime de cálculo": regra.nome,
