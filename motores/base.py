@@ -181,6 +181,7 @@ def processar_esteira(regra, pagamentos, principal_inicial, juros_inicial,
     pagamentos = pagamentos.sort_values("data_pagamento", kind="stable")
 
     historico = []
+    excedentes = []   # depósitos acima do saldo devido (o saldo não fica negativo)
     cur_p, cur_j = principal_inicial, juros_inicial
     cur_s = float(selic_inicial) if usa_s else 0.0
     last_date = data_inicial
@@ -198,6 +199,9 @@ def processar_esteira(regra, pagamentos, principal_inicial, juros_inicial,
         perc_s = val_s / total if total > 0 else 0.0
         abat_p, abat_j, abat_s = perc_p * deposito, perc_j * deposito, perc_s * deposito
         saldo_p, saldo_j = max(0.0, val_p - abat_p), max(0.0, val_j - abat_j)
+        if deposito - total > 0.005:
+            excedentes.append({"ordem": int(row["ordem_pagamento"]), "mes": current_date.strftime("%m/%Y"),
+                               "deposito": deposito, "devido": total, "excedente": deposito - total})
         saldo_s = max(0.0, val_s - abat_s)
 
         historico.append({
@@ -248,4 +252,6 @@ def processar_esteira(regra, pagamentos, principal_inicial, juros_inicial,
         })
 
     colunas = COLUNAS_RELATORIO_SELIC if usa_s else COLUNAS_RELATORIO
-    return pd.DataFrame(historico, columns=colunas)
+    df = pd.DataFrame(historico, columns=colunas)
+    df.attrs["excedentes"] = excedentes
+    return df

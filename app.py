@@ -209,6 +209,7 @@ if enviado:
             regra, pags[["ordem_pagamento", "data_pagamento", "Valor_Depositado"]],
             principal, juros, data_inicial, fim_graca, data_final_ts, bases, selic_inicial=selic)
 
+        excedentes = df_final.attrs.get("excedentes", [])
         parametros = {
             "Esfera": regra.esfera,
             "Regime de cálculo": regra.nome,
@@ -221,7 +222,10 @@ if enviado:
         }
         if usa_selic:
             parametros["Juros Selic iniciais"] = float(selic)
+        if excedentes:
+            parametros["ATENÇÃO – valor pago acima do saldo devido"] = float(sum(e["excedente"] for e in excedentes))
         st.session_state["resultado"] = {
+            "excedentes": excedentes,
             "df": df_final,
             "parametros": parametros,
             "excel": gerar_excel(df_final, parametros, pags),
@@ -246,6 +250,15 @@ if res:
     if res["aviso_indice"]:
         st.warning(f"A data final é posterior ao último índice disponível em todas as bases "
                    f"({ultima_data_comum:%m/%Y}). Para os meses sem índice foi usado o último valor existente.")
+
+    exc = res.get("excedentes") or []
+    if exc:
+        fmt_rs = lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        linhas = "  \n".join(f"• Pagamento {e['ordem']} ({e['mes']}): depósito {fmt_rs(e['deposito'])} × saldo devido "
+                             f"{fmt_rs(e['devido'])} → **{fmt_rs(e['excedente'])} a mais**" for e in exc)
+        st.error(f"⚠️ **Os depósitos superam o saldo devido em {fmt_rs(sum(e['excedente'] for e in exc))}.** "
+                 f"O saldo foi zerado e o excedente não é abatido de nada. Confira os valores informados "
+                 f"(principal, juros, pagamentos).  \n{linhas}")
 
     ultima = res["df"].iloc[-1]
     fmt = lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
