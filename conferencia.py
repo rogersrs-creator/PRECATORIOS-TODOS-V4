@@ -40,6 +40,8 @@ def ler_relatorio(origem, nome=None):
     return {
         "nome": nome or os.path.basename(str(origem)),
         "esfera": params["Esfera"],
+        "natureza": params.get("Natureza", "Não Tributário"),
+        "data_base": pd.to_datetime(params["Data-base inicial"], dayfirst=True).replace(day=1),
         "ano": int(params["Ano da proposta"]),
         "principal": float(params["Valor principal inicial"]),
         "juros": float(params.get("Juros iniciais", 0) or 0),
@@ -56,16 +58,20 @@ def listar_casos():
 
 def conferir(caso, bases, df_graca, regra_para, processar_esteira):
     """Refaz o cálculo de um caso e compara linha a linha. Retorna (resumo, detalhe)."""
-    resumo = {"Caso": caso["nome"], "Esfera": caso["esfera"], "Proposta": caso["ano"],
+    resumo = {"Caso": caso["nome"], "Esfera": caso["esfera"], "Natureza": caso.get("natureza", "Não Tributário"),
+              "Proposta": caso["ano"],
               "Pagamentos": len(caso["pagamentos"])}
     try:
-        regra = regra_para(caso["esfera"], caso["ano"])
+        regra = regra_para(caso["esfera"], caso["ano"], caso.get("natureza", "Não Tributário"))
         linha = df_graca[df_graca["ANO_PROPOSTA"] == caso["ano"]]
         if regra is None or linha.empty:
             raise ValueError("sem regime ou sem período de graça para esta proposta")
         linha = linha.iloc[0]
+        # Não tributário: data-base da planilha GRACA (confere também a planilha). Tributário: a do próprio caso.
+        data_base = caso["data_base"] if getattr(regra, "data_base_propria", False) \
+            else linha["DATA_BASE_INICIAL_CALCULOS"]
         calc = processar_esteira(regra, caso["pagamentos"], caso["principal"], caso["juros"],
-                                 linha["DATA_BASE_INICIAL_CALCULOS"], linha["FIM_PER_GRACA"],
+                                 data_base, linha["FIM_PER_GRACA"],
                                  caso["data_final"], bases, selic_inicial=caso["selic"])
     except Exception as e:  # noqa: BLE001
         resumo.update({"Homologado": None, "App": None, "Maior diferença": None,
@@ -145,11 +151,20 @@ def verificar_bases(bases):
                 calc = ant + v; erro = (n - calc).abs()
             else:
                 calc = ant + v / 100; erro = (n - calc).abs()
+            # variação que o próprio número-índice indica (na mesma unidade da coluna de variação)
+            if tipo == "mult":
+                implicita = (n / ant - 1) * 100
+            elif tipo == "soma_pct":
+                implicita = n - ant
+            else:
+                implicita = (n - ant) * 100
             for i in erro.index[1:]:
                 if pd.isna(erro[i]) or erro[i] > TOL_BASE:
+                    fmt = lambda x: "vazia" if pd.isna(x) else f"{x:.4f}%".replace(".", ",")
                     problemas.append({"Base": nome, "Mês": df.loc[i, "data"].strftime("%m/%Y"),
-                                      "Problema": f"número-índice {n[i]:.9f} não bate com a variação "
-                                                  f"{v[i]:.4f} (esperado {calc[i]:.9f})"})
+                                      "Problema": f"a coluna de variação informa {fmt(v[i])}, mas o número-índice "
+                                                  f"{n[i]:.9f} corresponde a {fmt(implicita[i])}. Confira qual dos "
+                                                  "dois está errado (os cálculos usam o número-índice)."})
                     n_prob += 1
         resumo.append({"Base": nome, "Meses": len(df), "De": df["data"].min().strftime("%m/%Y"),
                        "Até": df["data"].max().strftime("%m/%Y"),

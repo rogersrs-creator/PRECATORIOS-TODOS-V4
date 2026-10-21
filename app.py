@@ -9,7 +9,7 @@ import streamlit as st
 
 import config
 from fontes import carregar_todas, para_numero
-from motores import ESFERAS, Bases, esfera_disponivel, processar_esteira, regra_para
+from motores import ESFERAS, NATUREZAS, Bases, esfera_disponivel, processar_esteira, regra_para, tributario
 from relatorio import gerar_csv, gerar_excel, tabela_para_tela
 from importacao import importar_texto
 from validacao import validar_data_final, validar_pagamentos
@@ -64,6 +64,8 @@ with st.sidebar:
             st.markdown(f"**{esf}**")
             for r in regras:
                 st.caption(f"{r.nome}{'' if r.disponivel else ' (em desenvolvimento)'}: {r.descricao}")
+        st.markdown("**Tributário** (Subnacional e Nacional)")
+        st.caption(tributario.REGRAS["Subnacional"].descricao)
 
 # ------------------------------------------------------------------------------
 # Esfera e ano (fora do formulário para mostrar o regime na hora)
@@ -134,15 +136,17 @@ if pagina == "Conferência de casos homologados":
 
 st.title("📊 Atualização de Precatórios")
 
-c_esf, c_ano, c_reg = st.columns([1.2, 1, 3])
+c_esf, c_nat, c_ano, c_reg = st.columns([1.2, 1.1, 1, 3])
 esfera = c_esf.radio("Esfera", list(ESFERAS.keys()), horizontal=True)
+natureza = c_nat.radio("Natureza", NATUREZAS, horizontal=True,
+                       help="Tributário: SELIC simples só sobre o principal, sem período de graça.")
 
 if not esfera_disponivel(esfera):
     st.info(f"O modelo de cálculo para a esfera **{esfera}** ainda está em desenvolvimento. "
             "Selecione **Subnacional** para calcular.")
     st.stop()
 
-anos_disponiveis = [a for a in anos_graca if (r := regra_para(esfera, a)) and r.disponivel]
+anos_disponiveis = [a for a in anos_graca if (r := regra_para(esfera, a, natureza)) and r.disponivel]
 ano_proposta = c_ano.selectbox("Ano da proposta", anos_disponiveis, index=None,
                                placeholder="Selecione o ano...")
 
@@ -154,13 +158,26 @@ if anos_sem_graca:
 if ano_proposta is None:
     st.stop()
 
-regra = regra_para(esfera, ano_proposta)
+regra = regra_para(esfera, ano_proposta, natureza)
 linha_graca = df_graca[df_graca["ANO_PROPOSTA"] == ano_proposta].iloc[0]
-data_inicial = linha_graca["DATA_BASE_INICIAL_CALCULOS"]
+data_base_proposta = linha_graca["DATA_BASE_INICIAL_CALCULOS"]
+data_inicial = data_base_proposta
 fim_graca = linha_graca["FIM_PER_GRACA"]
+tributario_ativo = getattr(regra, "data_base_propria", False)
 
-c_reg.info(f"**Regime: {regra.esfera} – {regra.nome}**  \n{regra.descricao}  \n"
-           f"Data-base inicial: {data_inicial:%d/%m/%Y} · Fim da graça: {fim_graca:%d/%m/%Y}")
+if tributario_ativo:
+    c_reg.info(f"**Regime: {regra.esfera} – {regra.nome}**  \n{regra.descricao}  \n"
+               f"Data-base da proposta: {data_base_proposta:%d/%m/%Y}")
+    inicio_selic = bases.selic["data"].min().date()
+    data_base_txt = st.date_input(
+        "Data-base do cálculo", value=data_base_proposta.date(), min_value=inicio_selic,
+        max_value=data_base_proposta.date(), format="DD/MM/YYYY", key=f"data_base_trib_{ano_proposta}",
+        help="Data-base do valor informado no precatório (pode ser anterior à da proposta). "
+             "Só o mês/ano é considerado. A SELIC incide a partir deste mês.")
+    data_inicial = pd.Timestamp(data_base_txt).replace(day=1)
+else:
+    c_reg.info(f"**Regime: {regra.esfera} – {regra.nome}**  \n{regra.descricao}  \n"
+               f"Data-base inicial: {data_inicial:%d/%m/%Y} · Fim da graça: {fim_graca:%d/%m/%Y}")
 
 # ------------------------------------------------------------------------------
 # Formulário de entrada
@@ -208,6 +225,7 @@ valor_data_final = min(max(HOJE.replace(day=1), DATA_MIN), DATA_FINAL_MAX)
 with st.form("form_calculo"):
     st.subheader("Dados da proposta")
     usa_selic = getattr(regra, "usa_selic", False)
+    selic_obrigatorio = getattr(regra, "selic_obrigatorio", usa_selic)
     c1, c2, c3, *c4 = st.columns(4 if usa_selic else 3)
     data_final = c1.date_input("Data final da dívida", value=valor_data_final,
                                min_value=DATA_MIN, max_value=DATA_FINAL_MAX,
@@ -215,9 +233,14 @@ with st.form("form_calculo"):
                                help="Só o mês/ano é considerado (o dia é ajustado para 1º).")
     principal_txt = c2.text_input("Valor principal (R$)", placeholder="Ex.: 871,04")
     juros_txt = c3.text_input("Juros (R$)", value="0,00")
-    selic_txt = (c4[0].text_input("Juros Selic (R$) *", placeholder="Obrigatório (ex.: 0,00)",
-                                  help="Campo obrigatório nesta proposta. Informe 0,00 se não houver.")
-                 if usa_selic else "")
+    if usa_selic and selic_obrigatorio:
+        selic_txt = c4[0].text_input("Juros Selic (R$) *", placeholder="Obrigatório (ex.: 0,00)",
+                                     help="Campo obrigatório nesta proposta. Informe 0,00 se não houver.")
+    elif usa_selic:
+        selic_txt = c4[0].text_input("Selic (R$)", value="0,00",
+                                     help="Valor de Selic já existente no precatório, se houver.")
+    else:
+        selic_txt = ""
 
     st.subheader("Pagamentos efetuados")
     st.caption("Adicione uma linha por pagamento (botão **+** abaixo da tabela), **em ordem "
@@ -253,10 +276,13 @@ if enviado:
     selic = 0.0
     if usa_selic:
         selic = para_numero(selic_txt) if selic_txt.strip() else float("nan")
-        if not selic_txt.strip():
+        if not selic_txt.strip() and not selic_obrigatorio:
+            selic = 0.0
+        elif not selic_txt.strip():
             erros.append("O campo **Juros Selic** é obrigatório nesta proposta (informe 0,00 se não houver).")
         elif pd.isna(selic) or selic < 0:
-            erros.append("Informe um valor de **Juros Selic** válido (ex.: 1.234,56).")
+            erros.append(f"Informe um valor de **{'Juros Selic' if selic_obrigatorio else 'Selic'}** válido "
+                         "(ex.: 1.234,56).")
 
     data_final_ts = pd.Timestamp(data_final).replace(day=1)
     erros += validar_data_final(data_final_ts, data_inicial)
@@ -283,10 +309,16 @@ if enviado:
         ]
         parametros = {
             "Esfera": regra.esfera,
+            "Natureza": natureza,
             "Regime de cálculo": regra.nome,
             "Ano da proposta": ano_proposta,
             "Data-base inicial": data_inicial.strftime("%d/%m/%Y"),
-            "Fim do período de graça": fim_graca.strftime("%d/%m/%Y"),
+        }
+        if tributario_ativo:
+            parametros["Data-base da proposta"] = data_base_proposta.strftime("%d/%m/%Y")
+        parametros |= {
+            "Fim do período de graça": ("não se aplica (tributário)" if tributario_ativo
+                                        else fim_graca.strftime("%d/%m/%Y")),
             "Data final da dívida": data_final_ts.strftime("%d/%m/%Y"),
             "Valor principal inicial": float(principal),
             "Juros iniciais": float(juros),
@@ -301,7 +333,8 @@ if enviado:
             "parametros": parametros,
             "excel": gerar_excel(df_final, parametros, pags),
             "csv": gerar_csv(df_final),
-            "aviso_indice": data_final_ts > ultima_data_comum,
+            "aviso_indice": data_final_ts > (bases.selic["data"].max() if tributario_ativo else ultima_data_comum),
+            "ultima_indice": bases.selic["data"].max() if tributario_ativo else ultima_data_comum,
         }
 
 # ------------------------------------------------------------------------------
@@ -310,17 +343,17 @@ if enviado:
 res = st.session_state.get("resultado")
 if res:
     p = res["parametros"]
-    if (p["Esfera"], p["Ano da proposta"]) != (esfera, ano_proposta):
+    if (p["Esfera"], p["Ano da proposta"], p.get("Natureza", "Não Tributário")) != (esfera, ano_proposta, natureza):
         st.caption("O resultado abaixo é do cálculo anterior. Clique em **Calcular** para atualizar.")
     st.divider()
     st.subheader("Resultado")
-    st.caption(f"{p['Esfera']} · {p['Regime de cálculo']} · proposta {p['Ano da proposta']} · "
+    st.caption(f"{p['Esfera']} · {p.get('Natureza', 'Não Tributário')} · {p['Regime de cálculo']} · proposta {p['Ano da proposta']} · "
                f"data-base {p['Data-base inicial']} · fim da graça {p['Fim do período de graça']} · "
                f"data final {p['Data final da dívida']}")
 
     if res["aviso_indice"]:
-        st.warning(f"A data final é posterior ao último índice disponível em todas as bases "
-                   f"({ultima_data_comum:%m/%Y}). Para os meses sem índice foi usado o último valor existente.")
+        st.warning(f"A data final é posterior ao último índice disponível "
+                   f"({res.get('ultima_indice', ultima_data_comum):%m/%Y}). Para os meses sem índice foi usado o último valor existente.")
 
     exc = res.get("excedentes") or []
     if exc:
@@ -338,12 +371,14 @@ if res:
     cols_m[0].metric("Saldo principal", fmt(ultima["Saldo_Principal"]))
     cols_m[1].metric("Saldo juros", fmt(ultima["Saldo_Juros"]))
     if tem_selic:
-        cols_m[2].metric("Saldo juros Selic", fmt(ultima["Saldo_Selic"]))
+        cols_m[2].metric("Saldo Selic" if p.get("Natureza") == "Tributário" else "Saldo juros Selic",
+                         fmt(ultima["Saldo_Selic"]))
     cols_m[-1].metric("Saldo total", fmt(ultima["Saldo_Total"]))
 
     st.dataframe(tabela_para_tela(res["df"]), use_container_width=True, hide_index=True)
 
-    nome_base = f"RELATORIO-{p['Esfera'].upper()}-PROPOSTA-{p['Ano da proposta']}"
+    trib = "-TRIBUTARIO" if p.get("Natureza") == "Tributário" else ""
+    nome_base = f"RELATORIO-{p['Esfera'].upper()}{trib}-PROPOSTA-{p['Ano da proposta']}"
     d1, d2 = st.columns(2)
     d1.download_button("⬇️ Baixar Excel (.xlsx)", res["excel"], file_name=f"{nome_base}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

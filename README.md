@@ -35,8 +35,9 @@ motores/
 │   ├── p2021_2024.py
 │   ├── p2025_2026.py
 │   └── p2027.py
-└── nacional/
-    └── __init__.py        # espaço reservado para os modelos nacionais
+├── nacional/
+│   └── __init__.py        # motores nacionais (União)
+└── tributario.py          # precatórios de natureza tributária (as duas esferas)
 dados/                     # CSVs de reserva (usados se um link do config.py estiver vazio)
 .streamlit/config.toml
 ```
@@ -106,6 +107,23 @@ Até a EC 136/2025 as regras são iguais às dos subnacionais. A diferença é o
 
 Cada motor nacional (`motores/nacional/__init__.py`) herda o subnacional da mesma faixa e troca só o atributo
 `marco_ipca`. O período de graça usa a mesma tabela GRACA.
+
+## Precatórios tributários
+
+Escolha **Natureza › Tributário** (ao lado da esfera). Vale para Subnacional e Nacional e para todas as propostas.
+- SELIC simples **só sobre o principal**, da data-base do cálculo até cada pagamento e até a data final.
+- O valor da SELIC vai para o campo **Selic**; os juros informados não mudam. Como a SELIC incide só sobre o
+  principal, total e saldo seriam os mesmos lançando-a nos juros (para isso, troque `DESTINO_SELIC` em
+  `motores/tributario.py`).
+- Não há período de graça nem troca de índice nas EC 113/2021 e 136/2025.
+- **Data-base do cálculo:** é a do próprio precatório e pode ser anterior à da proposta. O padrão é a data-base da
+  proposta (planilha GRACA).
+- O campo Selic inicial é opcional (padrão 0,00).
+- Pagamentos: mesma amortização proporcional dos demais regimes.
+
+Conferido com 8 cálculos homologados de tributários (propostas 2018, 2020, 2022, 2026 e 2027, com e sem pagamentos):
+todos conferem ao centavo. Os casos estão na pasta `conferencia/` (arquivos `...-TRIBUTARIO-...`), sem número de
+processo nem nome de parte.
 
 ## Conferência automática (casos homologados)
 
