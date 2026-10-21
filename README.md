@@ -106,3 +106,20 @@ Até a EC 136/2025 as regras são iguais às dos subnacionais. A diferença é o
 
 Cada motor nacional (`motores/nacional/__init__.py`) herda o subnacional da mesma faixa e troca só o atributo
 `marco_ipca`. O período de graça usa a mesma tabela GRACA.
+
+## Conferência automática (casos homologados)
+
+Na barra lateral, escolha **Página › Conferência de casos homologados**. A página faz duas verificações:
+
+1. **Consistência das bases de índices:** confere todas as linhas das quatro bases (IPCA-15, Poupança, SELIC, IPCA):
+   cada número-índice precisa bater com o anterior e com a variação do mês, e não pode haver mês repetido ou faltando.
+   Encontra erros de digitação em qualquer mês, inclusive nos que nenhum caso usa.
+2. **Casos homologados:** refaz cada relatório da pasta `conferencia/` com os índices e os motores atuais e compara
+   todas as linhas (total na data e saldo após cada pagamento), com tolerância de R$ 0,05. Em caso de divergência,
+   mostra a linha a partir da qual o caso diverge.
+
+Use depois de atualizar as planilhas do Google Sheets e depois de publicar uma versão nova.
+
+**Para incluir um caso novo:** gere o relatório Excel no próprio app (com os dados do processo homologado), confira o
+saldo com o valor homologado e coloque o arquivo na pasta `conferencia/` do repositório. Também é possível testar um
+relatório sem colocá-lo na pasta, enviando-o pelo campo de upload da página.

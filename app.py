@@ -68,6 +68,70 @@ with st.sidebar:
 # ------------------------------------------------------------------------------
 # Esfera e ano (fora do formulário para mostrar o regime na hora)
 # ------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Página de conferência (casos homologados)
+# ------------------------------------------------------------------------------
+with st.sidebar:
+    st.divider()
+    pagina = st.radio("Página", ["Cálculo", "Conferência de casos homologados"], key="pagina")
+
+if pagina == "Conferência de casos homologados":
+    import conferencia as conf
+    st.title("✅ Conferência dos motores")
+    st.caption("Refaz cada caso homologado com os índices do Google Sheets e os motores desta versão, e "
+               f"compara todas as linhas do relatório (tolerância de R$ {conf.TOLERANCIA:.2f}). "
+               "Use depois de atualizar as planilhas de índices ou de publicar uma versão nova.")
+    arquivos = conf.listar_casos()
+    extras = st.file_uploader("Testar também outros relatórios homologados (Excel gerado pelo app)",
+                              type="xlsx", accept_multiple_files=True)
+    st.write(f"Casos na pasta *conferencia/* do repositório: **{len(arquivos)}**"
+             + (f" · enviados agora: **{len(extras)}**" if extras else ""))
+    st.subheader("1) Consistência das bases de índices")
+    res_bases, prob_bases = conf.verificar_bases(bases)
+    st.dataframe(res_bases, use_container_width=True, hide_index=True)
+    if len(prob_bases):
+        st.error(f"**{len(prob_bases)} problema(s) nas planilhas de índices.** Corrija no Google Sheets e clique em "
+                 "🔄 Recarregar índices na barra lateral.")
+        st.dataframe(prob_bases, use_container_width=True, hide_index=True)
+    else:
+        st.success("Todas as linhas das quatro bases batem com a variação mensal informada.")
+
+    st.subheader("2) Casos homologados")
+    if st.button("▶️ Rodar conferência", type="primary", use_container_width=True):
+        casos, falhas_leitura = [], []
+        for f in arquivos:
+            try:
+                casos.append(conf.ler_relatorio(f))
+            except Exception as e:  # noqa: BLE001
+                falhas_leitura.append(f"{f.split('/')[-1]}: {e}")
+        for up in extras or []:
+            try:
+                casos.append(conf.ler_relatorio(up.getvalue(), nome=up.name))
+            except Exception as e:  # noqa: BLE001
+                falhas_leitura.append(f"{up.name}: {e}")
+        resumo, detalhes = conf.rodar_todos(casos, bases, df_graca, regra_para, processar_esteira)
+        st.session_state["conferencia"] = (resumo, detalhes, falhas_leitura)
+    if "conferencia" in st.session_state:
+        resumo, detalhes, falhas_leitura = st.session_state["conferencia"]
+        for f in falhas_leitura:
+            st.error(f"Não foi possível ler o arquivo {f}")
+        if len(resumo):
+            n_ok = int(resumo["Situação"].str.startswith("✅").sum())
+            (st.success if n_ok == len(resumo) else st.error)(
+                f"**{n_ok} de {len(resumo)} casos conferem.**"
+                + ("" if n_ok == len(resumo) else " Abra os casos com ❌ abaixo para ver onde está a diferença."))
+            fmt_rs = lambda v: "" if v is None or pd.isna(v) else f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            tela = resumo.copy()
+            for c in ("Homologado", "App", "Maior diferença"):
+                tela[c] = tela[c].map(fmt_rs)
+            st.dataframe(tela, use_container_width=True, hide_index=True)
+            for _, r in resumo[~resumo["Situação"].str.startswith("✅")].iterrows():
+                d = detalhes.get(r["Caso"])
+                if d is not None:
+                    with st.expander(f"❌ {r['Caso']} – linha a linha", expanded=True):
+                        st.dataframe(d, use_container_width=True, hide_index=True)
+    st.stop()
+
 st.title("📊 Atualização de Precatórios")
 
 c_esf, c_ano, c_reg = st.columns([1.2, 1, 3])

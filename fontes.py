@@ -98,6 +98,9 @@ def _preparar_indice(df: pd.DataFrame, nome: str) -> pd.DataFrame:
     out = pd.DataFrame()
     out["data"] = pd.to_datetime(df["data"].str.strip(), dayfirst=True, errors="coerce")
     out["n_indice"] = df["n_indice"].apply(para_numero)
+    col_var = next((c for c in df.columns if c.startswith(("variac", "variaç"))), None)
+    if col_var:
+        out["variacao"] = df[col_var].apply(para_numero)   # usada só na verificação das bases
     out = out.dropna(subset=["data", "n_indice"])
     out["data"] = out["data"].apply(lambda dt: dt.replace(day=1))
     return out.sort_values("data").reset_index(drop=True)
